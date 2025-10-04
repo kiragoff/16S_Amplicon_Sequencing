@@ -1,0 +1,586 @@
+---
+title: "DADA2 Sequencing Tutorial v2"
+output:
+  word_document: default
+  html_document: default
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE)
+
+##This script Kira Goff, 2025. 
+#Based on https://joey711.github.io/phyloseq/ and https://david-barnett.github.io/microViz/articles/shao19-analyses.html.
+
+```
+
+This script assumes you are working with DADA2 output from my amplicon sequencing scripts. With minor modifications it will run on CSV data as well. 
+
+Completely clear the workspace so that no old objects are hanging around to mess with your shiny new ones.
+```{r}
+rm(list=ls(all=T))
+```
+
+Set working directory (where you want the final files to go). Sometimes, for some reason, you have to run this twice. The environment windows should have the wd variable set as whatever the path you set below as. If it's set as /lisa, run the chunk again. If you continue to have trouble, make sure this script is in your desired folder, close R, then open R from this RMD file. 
+```{r}
+wd <- setwd("/mnt/work-drive/kira/script-test") ##CHANGE THIS to a folder in your directory. You can get this information by opening a terminal window from within the desired folder, typing 'pwd,' and hitting enter. This will print the full path. 
+```
+
+
+If it's your first time or you have recently updated R, you may have to install one or all of these packages. Installation is currently hashed out. To run: delete all single # in this code chunk, leaving ## as-is.
+```{r}
+##  Install dada2 from repository
+#if (!requireNamespace("BiocManager", quietly = TRUE))
+#  install.packages("BiocManager")
+#BiocManager::install("dada2")
+
+#if (!requireNamespace("BiocManager", quietly = TRUE)) {
+#    install.packages("BiocManager")}
+#for (pkg in c("remotes", "dada2", "phyloseq", "ALDEx2")) {
+#  if (!requireNamespace(pkg, quietly = TRUE)) {
+#    BiocManager::install(pkg)
+#  }
+#}
+#remotes::install_github("ggloor/CoDaSeq/CoDaSeq")
+#remotes::install_github("kstagaman/phyloseqCompanion")
+
+##  Install reshape, readr, stringr, ggplot2, seqinr, dplyr, and tictoc
+#install.packages(c("reshape","readr","stringr","ggplot2","seqinr","dplyr", "tictoc"), dependencies = TRUE)
+
+#if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+#BiocManager::install(c("phyloseq", "microbiome", "ComplexHeatmap"), update = FALSE)
+#BiocManager::install("DECIPHER")
+
+# To install the latest version:
+#remotes::install_github("david-barnett/microViz")
+#install.packages("ggtext") # for rotated labels on ord_plot() 
+#install.packages("ggraph") # for taxatree_plots()
+#install.packages("DT") # for tax_fix_interactive()
+#install.packages("corncob") # for beta binomial models in tax_model()
+```
+
+
+Load packages the packages we're going to use.
+```{r}
+library(ggplot2);
+library(phyloseq);
+library(QsRutils);
+library(Biostrings);
+library(tidyverse);
+library(csv);
+library("microViz");
+#library("microbiome");
+library("stringr")
+library("patchwork")
+library("ggtext")
+library("ggraph")
+library("DT")
+library("ape")
+
+#library("corncob")
+```
+Create a metadata file. 
+
+Metadata file requirements:
+1) Data in the "Sample" column must match the sample names defined above
+2) One row for each sample
+3) One column for each variable
+4) Must be saved as a csv, with commas used as delineators
+
+Generic example:
+
+Sample                    Sample_Name         Sample_Type   Media     Variable_X    Variable_Y
+Sample_id_used_in_DADA2   Descriptive_name    Control       Rich      ...           ...
+Sample_id_used_in_DADA2   Descriptive_name    Control       Minimal   ...           ...
+Sample_id_used_in_DADA2   Descriptive_name    Exposure      Rich      ...           ...
+
+Import and format the seqtab.nochim.RDS file from DADA2.
+```{r}
+seqtab.in <- readRDS("seqtab.nochim.RDS") #read in your sequence table
+seqtab.in [1:3,1:3] # check to make sure something is there
+nc = ncol(seqtab.in) # store the number of columns for indexing
+seqtab.n <- as.data.frame(seqtab.in)
+seqtab.n <- seqtab.n %>% rename_with(~str_c("ASV",1:nc)) # remove sequences and replace with ASVs
+seqtab.n <- as.matrix(seqtab.n)
+seqtab.n [1:3, 1:3] # check to make sure things look correct
+seqtab.t <- t(seqtab.n)
+
+```
+
+Import and format the taxtab.rds file from DADA2. 
+```{r}
+taxa.in <- readRDS("taxtab.rds") ##Read in your rds file
+taxa.in[1:4,1:4] #check to make sure it's loaded properly
+
+#reassign ASVs as row names
+taxa.g <- taxa.in[,-1]
+rownames(taxa.g) <- taxa.in [,1]
+taxa.g <- as.matrix(taxa.g)
+```
+
+
+OPTIONAL, but recommended: build a tree of the organisms in your samples, and add it to the phyloseq object
+
+Extract ASVs and their 16S sequences
+```{r}
+x <- rownames(seqtab.t)
+x <- as.character(x)
+y <- colnames(seqtab.in)
+
+xname <- "ASV"
+yname <- "sequence"
+
+asv <- data.frame(x,y)
+names(asv) <- c(xname,yname)
+colSums(is.na(asv))
+
+```
+
+Generate fasta file for tree building
+```{r}
+fasta <- character(nrow(asv) * 2)
+fasta[c(TRUE, FALSE)] <- paste0(">", asv$"ASV")
+fasta[c(FALSE, TRUE)] <- paste0(asv$"sequence")
+writeLines(fasta, "asvseq.fasta")
+```
+
+Open a terminal window from your working directory (where asvseq.fasta is saved) and run the following two commands
+
+/home/lisa/muscle/muscle3.8.31_i86linux64 -in asvseq.fasta -out seqs.afa -maxiters 2
+/home/lisa/fasttree/FastTreeMP -nt seqs.afa > tree.nwk
+
+For ~8k ASVs, alignment took 3 minutes. Tree building took under a minute.
+
+When you are pasting commands into the terminal window, you must right click and select paste. 
+
+
+
+Create your phyloseq object
+```{r}
+sdata <- read.csv("metadata.csv", ##CHANGE THIS to your metadata file
+                row.names = 1, header = TRUE, sep = ",", check.names = TRUE, stringsAsFactors = TRUE)
+head(sdata)
+
+
+seqtab=otu_table(seqtab.t, taxa_are_rows = TRUE)
+taxtab=tax_table(taxa.g)
+samdata = sample_data(sdata)
+
+#check that sample names and taxa names match
+names.meta <- (sample_names(samdata))
+names.seq <- (sample_names(seqtab))
+all.equal(names.meta,names.seq) #Console output should be TRUE
+
+#if there are differences, unhash this and run it to see what needs fixing
+#the most common problem is that you've gotten a sample name wrong in your metadata table
+#oops1 <- setdiff(names.meta, names.seq)
+#oops2 <- setdiff(names.seq, names.meta)
+#oops1
+#oops2
+
+#and so do these
+taxa.seq <- (taxa_names(seqtab))
+taxa.tax <- (taxa_names(taxtab))
+all.equal(taxa.seq, taxa.tax) #Console output should be TRUE
+
+#If there are differences, use setdiff as above, but on the taxa.seq and taxa.tax vectors
+```
+
+
+If everything above matches, generate and save your phyloseq object!
+```{r}
+ps = phyloseq(otu_table(seqtab), tax_table(taxtab), sample_data(samdata))
+ps
+write_rds(ps, "ps.rds")
+
+```
+
+
+Read in your tree and attach it to your phyloseq object. If you didn't make a tree, DO NOT run this. 
+```{r}
+#read in your tree
+tree <- read_tree("tree.nwk")
+#check to make sure it's loaded (it'll be a mess, don't worry about it now)
+plot (tree)
+#add pseudocount in case of 0-length branches
+tree$edge.length <- tree$edge.length+0.001
+
+#add tree to phyloseq
+ps <- merge_phyloseq(ps,tree)
+ps <- root_phyloseq_tree(ps)
+```
+
+
+Replace "Unclassified" with the highest level of taxonomy that IS classified, as well as any standalone "Incertae Sedis"
+```{r}
+ps.fixed <- ps %>%
+ tax_fix(
+  min_length = 1,
+  unknowns = c("Incertae Sedis","Unclassified"),
+  sep = " ", anon_unique = TRUE,
+  suffix_rank = "current"
+ )
+```
+
+
+If the above throws errors, use tax_fix_interactive to figure out why. 
+
+When done with the interactive portion, hit the console stop button to exit the Shiny interface and run in R again.
+```{r}
+#tax_fix_interactive(psg) #unhash if needed
+```
+
+Take a look at sampling depth and read distribution before filtering.
+```{r}
+hist(sample_sums(ps.fixed), main="Sampling Depth", xlab="reads/sample", ylab="no. samples", las=1, breaks=12)
+```
+
+
+Remove the sequences and samples you don't want
+```{r}
+#Remove Kingdomes Eukaryota and Unclassified, and those from Mitochondria or Chloroplasts
+ps.clean <- ps.fixed %>%
+  subset_taxa(
+    Kingdom != "Eukaryota" &                   #no eukaryotes
+    Kingdom != "Unclassified" &               #no Unclassified
+      Family  != "Mitochondria" &             #filter out mitochondria
+      Class   != "Chloroplast"                #filter out chloroplasts
+  )
+
+
+# Remove samples with less than 10,000 reads (change as needed, but keep above 1000)
+ps.clean <- prune_samples(sample_sums(ps.clean) >= 10000, ps.clean)
+
+#Remove individual samples by name (for example, dummy duplicates for singlet sequences)
+#ps.clean <-prune_samples(sample_names(ps.clean) !="425-dummy-L001", ps.clean) 
+#ps.clean <-prune_samples(sample_names(ps.clean) !="425-dummy-L001" & !="dummy2", ps.clean) 
+
+#remove taxa that are no longer present in the data subset
+
+ps.clean <- prune_taxa(taxa_sums(ps.clean)>0, ps.clean)
+
+write_rds(ps.clean, "psclean.rds")
+
+#you can always read the psclean object back in again in the future
+
+```
+
+Look at read distribution after filtering; this shows us if anything has dropped way off
+```{r}
+hist(sample_sums(ps.clean), main="Sampling Depth", xlab="reads/sample", ylab="no. samples", las=1, breaks=12)
+```
+
+
+List any samples that were removed based on the above criteria - output in console. 
+If it says character(0), no samples were removed. 
+```{r}
+all <- sample_names(ps.clean)
+filtered <- sample_names(ps.fixed)
+removed <- unique(filtered[! filtered %in% all])
+removed
+```
+
+If any samples were removed that you need to keep, change your filtering criteria.
+
+Subset your data, if you're wishing to compare only certain samples. Make as many subsets as you'd like. 
+If you know there are certain samples you'd like to work with, it doesn't hurt to add a column named something like "subset" that you can use for filtering. 
+```{r}
+#Select IN based on a metadata column
+ps.set1  <- ps.clean %>%
+  subset_samples(subset %in% c("1")) #keeps all samples who have a value of "1" in column 'subset'
+
+#OR 
+
+#Filter OUT based on a metadata column
+#ps.set1 <- ps.clean %>%
+#  subset_samples(!(Salinity %in% c("n"))) #removes any samples with a value of "n" in column 'Salinity'
+
+#then remove taxa that are no longer present
+
+ps.set1 <- prune_taxa(taxa_sums(ps.set1)>0, ps.set1)
+ps.clean
+ps.set1
+  
+```
+Make sure you're using whichever object/data subset you want to work with from here on out. 
+
+See Stats_overview.txt for a high level view of different types of statistical analysis and when to use them.
+
+
+ALPHA DIVERSITY
+
+Available indexes: Observed, Chao1, ACE, Shannon, Simpson, InvSimpson (Inverse Simpson), and Fisher.
+Inverse Simpson (InvSimpson) often plots better than Simpson, because higher values indicate MORE diversity.
+
+Use your metadata table to colour your points, define their shape, and decide how to aggregate samples.
+
+Try to keep "shape" to a smaller number of variables, or it will look messy.
+```{r}
+p = plot_richness(
+  ps.set1, #data set 
+  measures=c("Shannon", "InvSimpson", "Chao1"), #alpha diversity indices you want to use
+  x="Sal.Temp", #metadata column used to aggregate x-axis on each plot
+  color="Concentration", #metadata column used for colour coding points
+  shape="Biocide"   #metadata column used to define the shape of points 
+  )
+
+p + geom_point(size=5,     #Marker size
+               alpha=0.7)  #Marker transparency, from 1 (completely opaque) to 0 (completely transparent)
+
+```
+Save whichever figures you'd like to keep via Export -> Save as Image, then selecting your parameters for export. 
+
+
+BETA DIVERSITY
+
+Beta diversity measures often requiring filtering of extremely low abundance taxon and almost always benefit from data transformations.
+
+Let's look at the variation in sampling depth for this data subset.
+```{r}
+hist(sample_sums(ps.set1), main="Sampling Depth", xlab="reads/sample", ylab="no. samples", las=1, breaks=12)
+sort(sample_sums(ps.set1))
+min(sample_sums(ps.set1))
+max(sample_sums(ps.set1))
+```
+
+
+PCA
+
+Decide what criteria you are going to use for filtering out extremely low abundance taxa (necessary for some beta diversity measures).
+
+Here I'm using formulas based on the data set we're working with. Change these values based on your data set!
+If you have one sample with a unique community, set s.thresh to 1.
+```{r}
+r.min <- min(sample_sums(ps.set1)) #total reads from the sample with smallest number of reads in the set
+rthresh = r.min*0.0001 #filtering threshold: 0.001% of reads in smallest sample in the set
+
+no <- length(sample_names(ps.set1)) #counts the number of samples
+s.thresh = no*0.05 #sample threshold: 5% of samples
+```
+
+
+The most useful available data transformation is usually CLR, but compositional, binary, and identity can also be used.
+
+Try playing around with filtering and transformation settings. Keep in mind that if there are large differences in sampling depth, you must do some amount of transformation or rarification. 
+
+If you are working with presence-absence data, it is important to remove the extremely rare taxa. 
+
+Create a transformed phyloseq Xtra object for plotting PCA.
+```{r}
+#Define how to filter your data for PCA plotting
+ps1.X <- ps.set1 %>%
+  # Filtering
+  tax_filter( 
+             min_sample_abundance=rthresh, #taxa must make up least 0.01% of reads in at least one sample
+             tax_level="Genus" #collapses to the Genus before filtering, but returns results at the original level
+             ) %>%
+  # Transformation
+  tax_transform(trans = "clr",  #data transformation. clr, compositional, binary (+/-), identity (no trasnformation)
+                rank = "Genus" #Taxanomic levels for data collapse. "unique" for ASV. "Genus" for genus, etc.
+                ) %>%
+  # no distances are needed for PCA: so skip dist_calc and go straight to ord_calc
+  ord_calc(method = "PCA")
+
+ps1.X
+```
+
+Make your PCA! This takes data from the code chunk above. To propagate changes, you must run the chunk above AND the chunk below. 
+```{r}
+PCA_plot <- ps1.X %>%
+  ord_plot(
+    axes=c(1,2), #which principal components to plot. 1,2 will explain the most variance.
+    colour = "Sal.Temp", #metadata column for colour coding
+    shape = "Biocide", #metadata column to define shapes
+    plot_taxa = 1:8, # how many taxa to plot, see below for other options
+    tax_vec_length = NA, #how long the taxa loading lines are; >0 or NA for autoscaling
+    tax_lab_style = tax_lab_style(
+      type = "text", #use "label" (box with background), "text", or "richtext"
+      max_angle = 90, #max text angle to match arrow direction; set max 90 or use 0 if labels overlap
+      perpendicular = FALSE, #if TRUE, puts text/labels perpendicular to vector rather than parallel
+      aspect_ratio = 1, 
+      justify="auto", #"center", "side" or "auto" for lining up text and arrows
+      size = 3, #size of labeling text (takes decimals)
+      alpha = 0.75, #label opacity (0=transparent, 1=opaque)
+      fontface = "italic", #options: plain, bold, italic, bold,italic
+      check_overlap=TRUE, #if type = "text" this prevents taxa names from overlapping, may eat a labels
+      label.r = unit(0, "mm") # square corners of labels - see ?geom_label
+    )
+  ) +
+##Additional options! Do not use all of them together
+#scale_color_paletteer_d("PNWColors::Shuksan2") + #Gallery link below to thousands of colorschemes
+#labs(title = "F-data", caption = NULL) + # add a title and/or remove the caption
+#theme(legend.position = "bottom", legend.background = element_rect()) # move legend to the bottom and box it in
+
+  ##Draw polygons
+#  stat_chull(mapping = aes(colour = Sal.Temp, linetype = Sal.Temp), 
+  #variable you want to use to draw lines, usual same as colour= above
+#    linewidth = 0.5, alpha = 0.5, show.legend = FALSE) +
+
+  ##Draw ellipses 
+#    stat_ellipse(aes(linetype = Sal.Temp, colour = Sal.Temp), linewidth = 0.3) +
+
+  guides(fill = guide_legend(ncol = 2)) + # how many columns (ncol) or rows (nrow) to make your legend(s)
+  theme(legend.position = "bottom", #where legends go
+        legend.box="vertical") #how multiple legents are stacked
+
+
+PCA_plot
+```
+If your plot doesn't appear in the plots window, check to make sure there isn't a spare + somewhere after the close of the ord_plot bracket. 
+
+plot_taxa options:
+- FALSE –> plot no taxa vectors or labels
+- integer vector e.g. 1:3 –> plot labels for top 3 taxa (by longest line length)
+- single numeric value e.g. 0.75 –> plot labels for taxa with line length > 0.75
+- character vector e.g. c('g__Bacteroides', 'g__Veillonella') –> plot labels for the exactly named taxa
+
+Paletteer Gallery:
+https://pmassicotte.github.io/paletteer_gallery/
+
+Interactive Palette Finder:
+https://r-graph-gallery.com/color-palette-finder.html
+
+
+IRIS DIAGRAMS
+
+Again, this takes its data from the ps1.X object above, so the ordination will change if that does. 
+```{r}
+irisPlot <- ps1.X %>% #uses the pca transformed data above
+  ord_plot_iris(
+    axes = c(1,2), #axes used for ordering bars - accepts 1 or 2 axes, but they don't have to be axes 1 and 2
+    tax_level = "Genus", #use "unique" for ASV-level data 
+    n_taxa = 15, #number of taxa to display, plus "other"
+    anno_colour = "Sal.Temp", # add external mark for metadata with multiple values
+    anno_binary = "bio.abs", #add marks for "TRUE" in a metadata column, hash out if not using
+    anno_binary_style = list(size = 1, colour = "black"), # defines the shape for anno_binary
+    ord_plot = "none" # we'll reuse the customised PCA plot from earlier
+  ) +
+  guides(fill = guide_legend(ncol = 1)) + # how many columns (or rows) to make your legend(s)
+  theme(legend.position = "right") # where to place the legend(s)
+
+irisPlot
+```
+
+
+Optional: Make side by side plots! You might want them organized differently than when you're using them as standalones.
+```{r}
+patchwork::wrap_plots(PCA_plot, irisPlot2, ncol=2, nrow=2,guides="keep", tag_level="keep")
+
+p1 <- PCA_plot + theme(legend.position.inside = c("0,0"), legend.justification="right", legend.box="horizontal") + guides(fill=guide_legend(nrow=1))#can add positional info here
+p2 <- irisPlot + theme(legend.position = "bottom", legend.box="vertical") + guides(fill=guide_legend(nrow=4))
+
+wrap_plots(p1, p2)
+
+```
+
+To explore and generate a variety of beta diversity plots, you can use this interactive chart exploring. You select ordination and composition options. Have fun. Play around. There are a few specific guidelines that should be followed for best practices, which I've listed below. 
+
+After you have a plot that you like the looks of, clicking the </> code button will give you the code to generate that chart in R. Create new code chunk (ctrl+alt+i) and paste the code chunk in. Replace "your_phyloseq" with the name of the object you used to launch ord_explore. Run that code chunk. Tadah, graph!
+```{r}
+ord_explore(ps.set1)
+```
+
+Ord_explore but if you want to use unifrac or presence-absence data.
+```{r}
+#Transform your counts to a proportional matrix
+ps1.prop <- ps.set1 %>%
+  tax_transform(trans = "compositional") 
+
+#filter out taxa that that have a maximum relative abundance of less than 0.1% (0.001)
+psF = filter_taxa(ps1.prop, function(x) max(x) < 0.001,TRUE)
+rmtaxa = taxa_names(psF)
+alltaxa = taxa_names(ps.set1)
+myTaxa = alltaxa[!alltaxa %in% rmtaxa]
+ps1.01per <- prune_taxa(myTaxa,ps.set1)
+
+#add pseudocount to tree
+phyloseq::phy_tree(ps1.01per)$edge.length <- phyloseq::phy_tree(ps1.01per)$edge.length+0.001
+#reroot tree
+ps1.01per <- root_phyloseq_tree(ps1.01per)
+
+#launch ord explore
+ord_explore(ps1.01per)
+```
+
+
+PLOTTING TREES
+
+Let's make a tree for our data subset!
+
+Here, we definitely want to filter out low abundance taxa. Or our tree becomes a bramble snarl. 
+```{r}
+#Transform your counts to a proportional matrix
+ps1.prop <- ps.set1 %>%
+  tax_transform(trans = "compositional") 
+
+#filter out taxa that that have a maximum relative abundance of less than 1% (0.01)
+psF = filter_taxa(ps1.prop, function(x) max(x) < 0.01,TRUE)
+rmtaxa = taxa_names(psF)
+alltaxa = taxa_names(ps.set1)
+myTaxa = alltaxa[!alltaxa %in% rmtaxa]
+ps1.1per <- prune_taxa(myTaxa,ps.set1)
+
+#Optional: make a rooted tree
+ps1.1per.rooted <- ps1.1per
+phyloseq::phy_tree(ps1.1per.rooted)$edge.length <- phyloseq::phy_tree(ps1.1per.rooted)$edge.length+0.001
+ps1.1per.rooted <- root_phyloseq_tree(ps1.1per.rooted)
+
+#plot your trees, add and remove options as needed
+tree <- plot_tree(ps1.1per, color="Sal.Temp", label.tips = "Genus", ladderize=TRUE)
+tree.rooted <- plot_tree(ps1.1per.rooted, color="Sal.Temp", label.tips = "Genus", ladderize=TRUE) 
+
+tree
+tree.rooted
+```
+
+
+HEATMAPS
+
+Heatmaps are good at showing what's going on with a relatively large (but not HUGE) number of taxa and samples.
+Plot a heatmap of your top 20 ASVs!
+
+```{r}
+#make a heat map using the object we made above of only taxa above 1% in at least one sample
+
+plot_heatmap(ps1.1per.rooted,
+             method="CCA", #"DCA", "CCA", "RDA", "DPCoA", "NMDS", "MDS", "PCoA" This is probably the most important.
+             distance="dpcoa", #bray, jsd, dpcoa, unifrac. if jaccard, also add binary=true
+             sample.label="Sample_Name", #metadata column to use to label samples
+             taxa.label="Genus" #taxonomic level to name samples
+             )
+
+```
+
+Or, do the same using the top X taxa from  your data set.
+```{r}
+set1.top30 <- names(sort(taxa_sums(ps.set1), decreasing=TRUE))[1:30] #change 20 to your desired number of ASVs
+ps1.top30 <- transform_sample_counts(ps.set1, function(ASV) ASV/sum(ASV))
+ps1.top30 <- prune_taxa(set1.top30, ps1.top30)
+
+plot_heatmap(ps1.top30,
+             method="CCA", #"DCA", "CCA", "RDA", "DPCoA", "NMDS", "MDS", "PCoA" This is probably the most important.
+             distance="bray", #bray, jsd, dpcoa, unifrac. if jaccard, also add binary=true
+             sample.label="Sample_Name", #metadata column to use to label samples
+             taxa.label="Genus" #taxonomic level to name samples
+             )
+```
+
+More detailed heatmap modifications discussed here: https://joey711.github.io/phyloseq/plot_heatmap-examples.html
+
+
+BAR PLOTS
+
+Choose how to filter your data for display here: Common options are top X taxa or everything above X percent relative abundance. 
+
+Here I'm  using the top 30 object we generated while making heatmaps.
+```{r}
+plot_bar(ps1.top30, 
+         x="Sample_Name", #how bars are defined
+         fill="Genus" 
+         ) + 
+  facet_wrap(~Sal.Temp, #metadata used to split graphs: comment this section out if you'd like a single bar chart
+             scales="free_x" #fixed, free, free_x, free_y
+             ) #leaves chart width unconstrained
+
+```
