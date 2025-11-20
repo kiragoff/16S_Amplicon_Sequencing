@@ -1,5 +1,5 @@
 ---
-title: "DADA2 Sequencing Tutorial v2"
+title: "16S Sequencing with DADA2"
 output:
   word_document: default
   html_document: default
@@ -7,29 +7,14 @@ editor_options:
   chunk_output_type: console
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo=TRUE)
+This script Kira Goff, 2025. 
+Based on https://www.bioconductor.org/packages/release/bioc/vignettes/dada2/inst/doc/dada2-intro.html and 2025 https://benjjneb.github.io/dada2/tutorial.html 
+New version of the benjjneb tutorial displace older versions, so if you're in the future, there may be differences. 
 
-##This script Kira Goff, 2025. 
-#Based on https://www.bioconductor.org/packages/release/bioc/vignettes/dada2/inst/doc/dada2-intro.html and 2025 https://benjjneb.github.io/dada2/tutorial.html 
-#New version of the benjjneb tutorial displace older versions, so if you're looking at that site from the future there may be differences). 
-#phyloseq based on https://joey711.github.io/phyloseq/ 
+After you are done with this script, launch the phylo-micro script from the same folder for data analysis.
 
-
-```
-
-Important things to know before running this script!
-
-1) This script allows you to process samples from multiple sequencing runs, then combine them for analysis. DO NOT COMBINE DATA FROM SEPARATE RUNS BEFORE PROCESSING. Each sequencing run produces unique error patterns and error rates, so the learnerrors function will not work properly on combined data sets. Bad error learning will introduce new errors rather than correcting existing ones.
-
-2) This is the version of the script for if you're working with data from MULTIPLE sequencing runs. See DADA2-one-run.RMD for if you are only working with data from one sequencing run. See DADA2-ITS.RMD for processing data from the fungal ITS region. 
-
-3) This script is designed for a minimum of two samples per sequencing run. If you have only one, you will need to either duplicate it or use a dummy sample from the same sequencing run.
-
-4) This script assumes you are using the Gieg lab's standard V4V5 primer pair. 515F: GTGYCAGCMGCCGCGGTAA. 926R: CCGYCAATTYMTTTRAGTTT. If you are not, I've highlighted sections of the code you will need to change. 
-
-
-
+---
+#R Basics
 
 For beginners: Important things to know about R!
 
@@ -43,9 +28,20 @@ For beginners: Important things to know about R!
 
 5) Sometimes if you're having a problem, the fastest and easiest thing to do is quit R and rerun the script from scratch. If the same problem shows up again, it's time to troubleshoot. 
 
+#Before running this script...
+
+Important things to know before running this script!
+
+1) This script allows you to process samples from multiple sequencing runs, then combine them for analysis. DO NOT COMBINE DATA FROM SEPARATE RUNS BEFORE PROCESSING. Each sequencing run produces unique error patterns and error rates, so the learnerrors function will not work properly on combined data sets. Bad error learning will introduce new errors rather than correcting existing ones.
+
+2) This is the version of the script for if you're working with data from MULTIPLE sequencing runs. See DADA2-one-run.RMD for if you are only working with data from one sequencing run. See DADA2-ITS.RMD for processing data from the fungal ITS region. 
+
+3) This script is designed for a minimum of two samples per sequencing run. If you have only one, you will need to either duplicate it or use a dummy sample from the same sequencing run.
+
+4) This script assumes you are using the Gieg lab's standard V4V5 primer pair. 515F: GTGYCAGCMGCCGCGGTAA. 926R: CCGYCAATTYMTTTRAGTTT. If you are not, I've highlighted sections of the code you will need to change. 
 
 
-
+#File name requirements
 
 Before you start, rename your files. There are strict file naming requirements.
 
@@ -65,110 +61,125 @@ Illegal file name:      AUG_24_UI2281_YS_YourName_Sample_1_SampleDescription_S5_
 Legal file name:        AUG-24-UI2281-YS-YourName-Sample-1-SampleDescription-S5-L001_R1_001.fastq.gz
 Useful file name:       SampleDescription_R1_001.fastq.gz
 
+#Set up workspace
 
-
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
 
 Completely clear the workspace so that no old objects are hanging around to mess with your shiny new ones.
-```{r}
-rm(list=ls(all=T))
+```{r clear-workspace}
+rm(list = ls(all = T))
 ```
 
-Set working directory (where you want the final files to go). Sometimes, for some reason, you have to run this twice. The environment windows should have the wd variable set as whatever the path you set below as. If it's set as /lisa, run the chunk again. If you continue to have trouble, make sure this script is in your desired folder, close R, then open R from this RMD file. 
-```{r}
-wd <- setwd("/path/to/your/folder") ##CHANGE THIS to a folder in your directory. You can get this information by opening a terminal window from within the desired folder, typing 'pwd,' and hitting enter. This will print the full path. 
+Set working directory (where you want the final files to go). 
+Sometimes, for some reason, you have to run this twice. 
+The environment windows should have the wd variable set as whatever the path you set below as. 
+If it's set as /lisa, run the chunk again. 
+If you continue to have trouble, make sure this script is in your desired folder, close R, then open R from this RMD file. 
+```{r set-working-directory}
+wd <- setwd("/path/to/your/folder") ## CHANGE THIS to your working directory.
+# You can get this information by opening a terminal window from within the desired folder, typing 'pwd,' and hitting enter. This will print the full path.
 
-#If you're on Windows, the file path will probably be something like "C:\Users\path\to\your\folder". You will have to manually change all \ in all file paths to \\. "C:\\Users\\path\\to\\your\\folder".
+# If you're on Windows, the file path will probably be something like "C:\Users\path\to\your\folder". You will have to manually change all \ in all file paths to \\. "C:\\Users\\path\\to\\your\\folder".
 ```
 
 
-If it's your first time or you have recently updated R, you may have to install one or all of these packages. Installation is currently hashed out. To run: delete all single # in this code chunk, leaving ## as-is.
-```{r}
+If it's your first time or you have recently updated R, you may have to install one or all of these packages.
+To run: delete the # in {#r}
+```{#r package-installation}
 ##  Install dada2 from repository
-#if (!requireNamespace("BiocManager", quietly = TRUE))
-#  install.packages("BiocManager")
-#BiocManager::install("dada2")
+if (!requireNamespace("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+BiocManager::install("dada2")
 
 ##  Install reshape, readr, stringr, ggplot2, seqinr, dplyr, and tictoc
-#install.packages(c("reshape","readr","stringr","ggplot2","seqinr","dplyr", "tictoc"), dependencies = TRUE)
+install.packages(c("reshape","readr","stringr","ggplot2","seqinr","dplyr", "tictoc"), dependencies = TRUE)
 ```
 
-
 Load packages the packages we're going to use.
-```{r}
-library(dada2); packageVersion("dada2")
-library(tictoc);
+```{r load-packages}
+library(dada2)
+packageVersion("dada2")
+library(tictoc)
 library(ggplot2)
 ```
 
-Tell R where to find your raw data. This also prints the names of the files inside that folder - check the output to make sure it's correct.
-```{r}
-path <- "/path/to/data/folder/01" ##CHANGE THIS to the folder with your first set of raw data
+#DATA SET 1
 
-list.files(path)
+##Data import
+
+Tell R where to find your raw data. This also prints the names of the files inside that folder - check the output to make sure it's correct.
+```{r set-path}
+path <- "/path/to/raw/data/folder1" ## CHANGE THIS to the folder with your first set of raw data
+
+list.files(path) # print file names in folder to console
 ```
 
 Read the files in the raw data folder into R and generate sample names from the file names. This assumes you renamed your files as directed before beginning. 
 
 Reminders: Each sample name must be unique, and the only underscores are in _R1_ and _R2_.
-```{r}
-#Define your forward (_R1_001) and reverse (_R2_001) reads
-fnF1 <- sort(list.files(path, pattern="_R1_001.fastq.gz", full.names = TRUE))
-fnR1 <- sort(list.files(path, pattern="_R2_001.fastq.gz", full.names = TRUE))
+```{r establish-names}
+# Define your forward (_R1_001) and reverse (_R2_001) reads
+fnF1 <- sort(list.files(path, pattern = "_R1_001.fastq.gz", full.names = TRUE))
+fnR1 <- sort(list.files(path, pattern = "_R2_001.fastq.gz", full.names = TRUE))
 # Extract sample names
 sample.names <- sapply(strsplit(basename(fnF1), "_"), `[`, 1)
-```
-
-Designate a place for the reads you are going to filter, and give them sample names. This creates a folder named "filtered" in the raw data folder you defined above. 
-```{r}
 # Place filtered files in filtered/ subdirectory
-filtF1 <- file.path(path, "filtered", paste0(sample.names, "_F_filt.fastq.gz")) 
+filtF1 <- file.path(path, "filtered", paste0(sample.names, "_F_filt.fastq.gz"))
 filtR1 <- file.path(path, "filtered", paste0(sample.names, "_R_filt.fastq.gz"))
 names(filtF1) <- sample.names
 names(filtR1) <- sample.names
 ```
 
+##QC data
 
-Note: Some sequencing centres have started binning quality scores - this will show as strict bands in the plot. The DADA2 branch available in R doesn't have a work around for this yet, but the command line version does.
+Note: Some sequencing centres have started binning quality scores - this will show as strict bands in the plot. 
+The DADA2 branch available in R doesn't have a work around for this yet, but the command line version does.
 
 Examine the quality profile of the reads of the first 4 samples. If you have less than 4 samples, set this number as appropriate for your analysis. 
 
-Green line: mean quality score. Orange: quartiles of quality score distribution. We want these to stay above a Q score of 20.
+Green line: mean quality score. Orange: quartiles of quality score distribution. 
+We want these to stay above a Q score of 20.
 
-Use this output to determine forward trim lengths for filterAndTrim below. (If quality is good all the way through, choose 280. We are removing the first 19 bp for the primers, so that only trims one additional base)
-```{r}
+Use this output to determine trim lengths for the filter-and-trim chunk (truncLen=c(forward, reverse))
+Q scores always drop through the length of the read
+Reverse reads always have lower Q scores than forward
+```{r view-quality-profiles}
 plotQualityProfile(fnF1[1:4])
-```
-
-Examine quality profile of the reverse reads. Reverse reads always fall off in Q scores more quickly. Use this output to determine reverse trim length for filterAndTrim below to remove the most garbage of data. This number will likely be 260 or 240 with newer data sets. You will need a minimum of 20 bp overlap to merge the forward and reverse reads. As above, we want the orange lines (and definitely the green lines!) to stay at or above 20.
-
-```{r}
 plotQualityProfile(fnR1[1:4])
 ```
+Examine quality profile of the reads. 
+You want to set the trim length to get rid of as many errors as possible, while keeping the most length.
+We take initial 19bp off forward reads and 20bp off reverse reads, so consider that in your target length
+We need a minimum 20 bp overlap to merge forward and reverse reads downstream
 
+For new data sets, you will often be looking at 280 forward and 260/240 reverse
+For older data sets, 240/200 or 240/190 tends to work well
 
-
-Filter out all your poor quality data! While it can be tempting to try to keep as much information as possible, remember that garbage in=garbage out. Including more error-prone data here will also make all future steps take longer to run. 
-
-If you're familiar with the old version of the script, it might feel like you're losing a lot of reads here. This isn't the case - you're combining a lot of quality filtering steps into one, so all the losses are taking place in one chunk. The datasets I benchmarked show the final output here is very close to the final output from the previous script, it's just that those loses were spread out over more steps.
+If you're familiar with the old version of the script, it might feel like you're losing a lot of reads here. 
+This isn't the case - you're combining a lot of quality filtering steps into one, so all the losses are taking place in one chunk. 
 
 All of the variable with two options (such as trimLeft=c(19,20)) give the value to use for the forward reads, then the reverse reads.
-```{r}
+```{r filter-and-trim}
 tic()
-out <- filterAndTrim(fnF1, filtF1, fnR1, filtR1, 
-              trimLeft=c(19,20), ##trims off our primers - assumes the standards Gieg lab V4V5 primer set - change lengths if you're using something else
-              truncLen=c(260,200), ##adjust these lengths based your examination of the quality plots above
-              maxN=0, ##keep this at 0 or things won't work downstream
-              maxEE=c(2,2), ##Removes reads expected to have more than two sequencing errors. Keep these values at 2 unless absolutely necessary - eg you're losing all your reverse reads. Do not go above maxEE=c(2,4).
-              truncQ=2, 
-              minLen=75, #gets rid of junky sequences and those too short to merge (change for other regions, but keep at or above 50)
-              rm.phix=TRUE,
-              compress=TRUE, multithread=TRUE) # If you're running this on Windows, use multithread=FALSE
-head(out)
+out <- filterAndTrim(fnF1, filtF1, fnR1, filtR1,
+  trimLeft = c(19, 20), # trims primers based on length - change if using other primers
+  truncLen = c(260, 200), # final length of trimmed reads
+  maxN = 0, # removes sequencing containing any Ns - DO NOT CHANGE
+  maxEE = c(2, 2), # Maximum number of predicted errors allowed in a read
+  truncQ = 2,
+  minLen = 75, # gets rid of short/junky sequences
+  rm.phix = TRUE, # removes phiX controls used in sequencing
+  compress = TRUE,
+  multithread = TRUE # If you're running this on Windows, use multithread=FALSE
+)
+head(out) # show output
 toc()
 ```
 
 Take a look at the new quality profiles to make sure you are left with good data only.
-```{r}
+```{r view-clean-quality-profiles}
 tic()
 plotQualityProfile(filtF1[1:4])
 plotQualityProfile(filtR1[1:4])
@@ -177,7 +188,7 @@ toc()
 
 Optionally, generate a CSV of how things are going so far. 
 ```{r}
-write.csv(out,file="qc_check1.csv")
+write.csv(out, file = "qc_check1.csv")
 ```
 
 
@@ -185,46 +196,60 @@ If you do lose a ludicrous number of samples, try changing parameters.
 1. Trim the reverse reads to a shorter length, ie. truncLen=c(280,240). Rerun. 
 2. If you're still losing everything, keep truncLen the same, but increase the number of errors allowed in the reverse reads (maxEE=c(2,4)).
 
-In one case with a dataset from 5 years ago and a relatively small number of initial reads, I ended up using cut lengths of 280 and 200, maxEE=2,4. This region is around 375 bp after primer removals, so 280 forward and 200 backwards still leaves enough length for a minimum overlap of 20bp when the reads are stitched together later. In this case, it resulted in a 33% increase in the number of read retained with minimal decrease in data quality (97k reads retained instead of 73k). With small data sets these parameters take less than minute to run, so feel free to play around.  A lot of older data sets do well with truncLen=c(240,200) or truncLen=c(240,190) and maxEE=c(2,2). I find that going below 240,190 tends to result in downstream merge issues for the V4V5 region.
+In one case with a dataset from 5 years ago and a relatively small number of initial reads, I ended up using cut lengths of 280 and 200, maxEE=2,4. 
+This region is around 375 bp after primer removals, so 280 forward and 200 backwards still leaves enough length for a minimum overlap of 20bp when the reads are stitched together later. 
+In this case, it resulted in a 33% increase in the number of read retained with minimal decrease in data quality (97k reads retained instead of 73k). 
+With small data sets these parameters take less than minute to run, so feel free to play around.  
+A lot of older data sets do well with truncLen=c(240,200) or truncLen=c(240,190) and maxEE=c(2,2). 
+I find that going below 240,190 tends to result in downstream merge issues for the V4V5 region.
 
-The majority of data sets from 2023 onward should be able to use truncLen=c(280,260) and maxEE=c(2,2). Any datasets you are combining for comparison should ideally use the same trim parameters. HOWEVER, it is more important that the quality of your data sets is similar. The exception is trimLeft, which should always be the length of your primers, and you should be using the same primers for merged data sets.
+The majority of data sets from 2023 onward should be able to use truncLen=c(280,260) and maxEE=c(2,2). 
+Any datasets you are combining for comparison should use the same trim parameters.
+Start with your oldest dataset to get the parameters you'll use for all the remaining sets
 
+##Error correction
 
-
-Dereplicate your reads: collapse reads that encode identical sequences to reduce downstream computational times. 
-```{r}
+Collapse reads that encode identical sequences to reduce downstream computational times. 
+```{r deriplicate-reads}
 tic()
-derepF1 <- derepFastq(filtF1, verbose=TRUE)
-derepR1 <- derepFastq(filtR1, verbose=TRUE)
+derepF1 <- derepFastq(filtF1, verbose = TRUE)
+derepR1 <- derepFastq(filtR1, verbose = TRUE)
 names(derepF1) <- sample.names
 names(derepR1) <- sample.names
 toc()
 ```
 
 
-Learn error rates. Error parameters vary between sequencing runs and PCR protocols, and this algorithm learns the error parameters from the data itself. You cannot combine data from different sequencing runs. This is a time-consuming step, and allowing more errors through during filtering stage further increases the run time. 
-```{r}
+Learn error rates. 
+Error parameters vary between sequencing runs and PCR protocols, and this algorithm learns the error parameters from the data itself. 
+This chunk is why you cannot combine data from different sequencing runs. 
+Combining different error patterns will INTRODUCE errors to the data.
+This is a time-consuming step, and allowing more errors in filter-and-trim further increases the run time. 
+```{r learnErrors}
 tic()
-errF1 <- learnErrors(derepF1, multithread=TRUE)
-errR1 <- learnErrors(derepR1, multithread=TRUE)
+errF1 <- learnErrors(derepF1, multithread = TRUE)
+errR1 <- learnErrors(derepR1, multithread = TRUE)
 toc()
 ```
 
 
-Optional: visualize error rates. We only care about A2A, C2C, G2G, T2T. Those plots should be near-horizontal lines across the top of the graph.
-```{r}
+Optional: visualize error rates. 
+We only care about A2A, C2C, G2G, T2T. 
+Those plots should be near-horizontal lines across the top of the graph.
+```{r visualize-error-rates}
 tic()
-plotErrors(errF1, nominalQ=TRUE) + ggtitle("Forward")
-plotErrors(errR1, nominalQ=TRUE) + ggtitle("Reverse")
+plotErrors(errF1, nominalQ = TRUE) + ggtitle("Forward")
+plotErrors(errR1, nominalQ = TRUE) + ggtitle("Reverse")
 toc()
 ```
 
+##Denoise and generate sequences
 
-Use the patterns of error learned above to denoise and infer sample composition. This is a time consuming step.
-```{r}
+Denoise and infer sample composition. This is a time consuming step.
+```{r denoising}
 tic()
-dadaF1 <- dada(derepF1, err=errF1, multithread=TRUE)
-dadaR1 <- dada(derepR1, err=errR1, multithread=TRUE)
+dadaF1 <- dada(derepF1, err = errF1, multithread = TRUE)
+dadaR1 <- dada(derepR1, err = errR1, multithread = TRUE)
 dadaF1[[1]]
 dadaR1[[1]]
 toc()
@@ -232,9 +257,9 @@ toc()
 
 
 Merge your forward and reverse reads to get the full V4V5 sequences. This will take a few minutes.
-```{r}
+```{r merge-reads}
 tic()
-merger1 <- mergePairs(dadaF1, derepF1, dadaR1, derepR1, verbose=TRUE)
+merger1 <- mergePairs(dadaF1, derepF1, dadaR1, derepR1, verbose = TRUE)
 head(merger1[[1]])
 toc()
 ```
@@ -242,22 +267,23 @@ toc()
 Look at the console output. If a large proportion of your reads are not merging, your parameters are too loose OR you have cut your reads too short.
 
 Save your sequence table.
-```{r}
+```{r make-sequence-table}
 seqtab1 <- makeSequenceTable(merger1)
-saveRDS(seqtab1, "seqtab1.Rds")
+saveRDS(seqtab1, "seqtab1.rds")
 ```
 
-Run the next code chunk for a second sequencing run. If R crashes, you can always read seqtab1.Rds back in  to your workspace.
+#DATA SET 2
 
-# Second data set
+Run the next code chunk for a second sequencing run. 
+If R crashes, you can read seqtab1.rds back into your workspace.
 
 The next four code chunks are to do the same as above, but for a second set of samples. 
-```{r}
+```{r 2-import-data}
 (tic)
-path <- "/path/to/data/folder/02" ##CHANGE THIS to the folder with your next set of raw data
+path <- "/path/to/data/folder/02" ## CHANGE THIS to the folder with your next set of raw data
 
-fnF2 <- sort(list.files(path, pattern="_R1_001.fastq.gz", full.names = TRUE))
-fnR2 <- sort(list.files(path, pattern="_R2_001.fastq.gz", full.names = TRUE))
+fnF2 <- sort(list.files(path, pattern = "_R1_001.fastq.gz", full.names = TRUE))
+fnR2 <- sort(list.files(path, pattern = "_R2_001.fastq.gz", full.names = TRUE))
 sample.names2 <- sapply(strsplit(basename(fnF2), "_"), `[`, 1)
 filtF2 <- file.path(path, "filtered", paste0(sample.names2, "_F_filt.fastq.gz"))
 filtR2 <- file.path(path, "filtered", paste0(sample.names2, "_R_filt.fastq.gz"))
@@ -268,172 +294,145 @@ plotQualityProfile(fnR2[1:4])
 toc()
 ```
 
-These settings should ideally be the same as above. However, it is more important that you select the appropriate parameters for your data.
-```{r}
+These settings should ideally be the same as above. 
+Check to make sure the output looks good.
+```{r 2-qc-data}
 tic()
-out2 <- filterAndTrim(fnF2, filtF2, fnR2, filtR2, trimLeft=c(19,20),truncLen=c(240,200), maxN=0, maxEE=c(2,2), truncQ=2, minLen=75, rm.phix=TRUE, compress=TRUE, multithread=TRUE) #set as required
+out2 <- filterAndTrim(fnF2, filtF2, fnR2, filtR2, trimLeft = c(19, 20), truncLen = c(240, 200), maxN = 0, maxEE = c(2, 2), truncQ = 2, minLen = 75, rm.phix = TRUE, compress = TRUE, multithread = TRUE) # set as required
 head(out2)
-plotQualityProfile(filtF2[1:4]) #if your data is ugly, it's good to make sure your new profiles are good
+plotQualityProfile(filtF2[1:4]) # if your data is ugly, it's good to make sure your new profiles are good
 plotQualityProfile(filtR2[1:4])
-write.csv(out2,file="qc_check2.csv")
+write.csv(out2, file = "qc_check2.csv")
 toc()
 ```
 
 Derep, find your error rates, denoise, and merge your reads. This is the rate limiting step. Make sure you check to see what proportion of reads were successfully merged.
-```{r}
+```{r 2-process-data}
 tic()
-derepF2 <- derepFastq(filtF2, verbose=TRUE)
-derepR2 <- derepFastq(filtR2, verbose=TRUE)
+derepF2 <- derepFastq(filtF2, verbose = TRUE)
+derepR2 <- derepFastq(filtR2, verbose = TRUE)
 toc()
 tic()
-errF2 <- learnErrors(derepF2, multithread=TRUE)
-errR2 <- learnErrors(derepR2, multithread=TRUE)
+errF2 <- learnErrors(derepF2, multithread = TRUE)
+errR2 <- learnErrors(derepR2, multithread = TRUE)
 toc()
 tic()
-dadaF2 <- dada(derepF2, err=errF2, multithread=TRUE)
-dadaR2 <- dada(derepR2, err=errR2, multithread=TRUE)
-merger2 <- mergePairs(dadaF2, derepF2, dadaR2, derepR2, verbose=TRUE)
+dadaF2 <- dada(derepF2, err = errF2, multithread = TRUE)
+dadaR2 <- dada(derepR2, err = errR2, multithread = TRUE)
+merger2 <- mergePairs(dadaF2, derepF2, dadaR2, derepR2, verbose = TRUE)
 head(merger2[[1]])
 seqtab2 <- makeSequenceTable(merger2)
-saveRDS(seqtab2, "seqtab2.Rds")
+saveRDS(seqtab2, "seqtab2.rds")
 toc()
 ```
 
 
-# Third data set (and on)
+# DATA SET 3+
 
-Third verse, same as the first. If you only have two samples, don't run this! If you have more than three, copy and paste this code chunk as many times as necessary, making sure to increment the numbers where indicated (3 -> 4, etc). If you do not update all of the numbering, you will either get errors, or your data will be wrong and you won't know it. 
+Third verse, same as the first. If you only have two samples, don't run this! 
+If you have more than three, copy and paste this code chunk as many times as necessary, making sure to increment the numbers where indicated (3 -> 4, etc). 
+If you do not update all of the numbering, you will either get errors, or your data will be wrong and you won't know it. 
 
-```{r}
+Copy into a TEXT EDITOR to find/replace xxx with the number of your current data set
+```{r xxx-import-data}
 tic()
-path <- "/path/to/data/folder/03" ##CHANGE THIS to the folder with your next set of raw data
+path <- "/path/to/data/folder/xxx" ## CHANGE THIS to the folder with your next set of raw data
 
-fnF3 <- sort(list.files(path, pattern="_R1_001.fastq.gz", full.names = TRUE)) ##1x number to increment (fnF3 -> fnF4 if you're on data from a fourth run)
-fnR3 <- sort(list.files(path, pattern="_R2_001.fastq.gz", full.names = TRUE)) ##1X number to increment
-sample.names3 <- sapply(strsplit(basename(fnF3), "_"), `[`, 1) #2x numbers to increment
-filtF3 <- file.path(path, "filtered", paste0(sample.names3, "_F_filt.fastq.gz")) #2x numbers to increment
-filtR3 <- file.path(path, "filtered", paste0(sample.names3, "_R_filt.fastq.gz")) #2x numbers to increment 
-names(filtF3) <- sample.names3  #2x numbers to increment
-names(filtR3) <- sample.names3  #2x numbers to increment
-plotQualityProfile(fnF3[1:4]) #1x numbers to increment
-plotQualityProfile(fnR3[1:4]) #1x numbers to increment
-toc()
-```
-
-These settings should ideally be the same as above. However, it is more important that you select the appropriate parameters for your data.
-```{r}
-tic()
-out3 <- filterAndTrim(fnF3, filtF3, fnR3, filtR3, trimLeft=c(19,20),truncLen=c(240,200), maxN=0, maxEE=c(2,2), truncQ=2, minLen=75, rm.phix=TRUE, compress=TRUE, multithread=TRUE) #4x numbers to increment, adjust parameters as needed
-head(out3) #1x numbers to increment
-write.csv(out3,file="qc_check3.csv") #2x numbers to increment
-plotQualityProfile(filtF3[1:4]) #1x numbers to increment
-plotQualityProfile(filtR3[1:4]) #1x numbers to increment
-toc()
-```
-
-Derep, find your error rates, denoise, and save your sequence table. 
-```{r}
-tic()
-derepF3 <- derepFastq(filtF3, verbose=TRUE)  #2x numbers to increment
-derepR3 <- derepFastq(filtR3, verbose=TRUE)  #2x numbers to increment
-
-errF3 <- learnErrors(derepF3, multithread=TRUE) #2x numbers to increment
-errR3 <- learnErrors(derepR3, multithread=TRUE) #2x numbers to increment
-
-dadaF3 <- dada(derepF3, err=errF3, multithread=TRUE) #3x numbers to increment
-dadaR3 <- dada(derepR3, err=errR3, multithread=TRUE) #3x numbers to increment
-
-merger3 <- mergePairs(dadaF3, derepF3, dadaR3, derepR3, verbose=TRUE)  #5x numbers to increment
-head(merger3[[1]]) #1x numbers to increment 
-seqtab3 <- makeSequenceTable(merger3) #2x numbers to increment
-saveRDS(seqtab3, "seqtab3.Rds") #2x numbers to increment
-toc()
-```
-
-## End of data set 3
-
-Here is a template for the three code chunks where the number has been replaced with "xxx." If you copy this into a text editor you can find/replace xxx with the number of your current data set, leaving the one below to use for next time. Don't run the xxx chunks.
-```{r}
-tic()
-path <- "/path/to/data/folder/xxx" ##CHANGE THIS to the folder with your next set of raw data
-
-fnFxxx <- sort(list.files(path, pattern="_R1_001.fastq.gz", full.names = TRUE)) ##1x number to increment 
-fnRxxx <- sort(list.files(path, pattern="_R2_001.fastq.gz", full.names = TRUE)) ##1X number to increment
-sample.namesxxx <- sapply(strsplit(basename(fnFxxx), "_"), `[`, 1) #2x numbers to increment
-filtFxxx <- file.path(path, "filtered", paste0(sample.namesxxx, "_F_filt.fastq.gz")) #2x numbers to increment
-filtRxxx <- file.path(path, "filtered", paste0(sample.namesxxx, "_R_filt.fastq.gz")) #2x numbers to increment 
-names(filtFxxx) <- sample.namesxxx  #2x numbers to increment
-names(filtRxxx) <- sample.namesxxx  #2x numbers to increment
-plotQualityProfile(fnFxxx[1:4]) #1x numbers to increment
-plotQualityProfile(fnRxxx[1:4]) #1x numbers to increment
+fnFxxx <- sort(list.files(path, pattern = "_R1_001.fastq.gz", full.names = TRUE)) ## 1x number to increment
+fnRxxx <- sort(list.files(path, pattern = "_R2_001.fastq.gz", full.names = TRUE)) ## 1X number to increment
+sample.namesxxx <- sapply(strsplit(basename(fnFxxx), "_"), `[`, 1) # 2x numbers to increment
+filtFxxx <- file.path(path, "filtered", paste0(sample.namesxxx, "_F_filt.fastq.gz")) # 2x numbers to increment
+filtRxxx <- file.path(path, "filtered", paste0(sample.namesxxx, "_R_filt.fastq.gz")) # 2x numbers to increment
+names(filtFxxx) <- sample.namesxxx # 2x numbers to increment
+names(filtRxxx) <- sample.namesxxx # 2x numbers to increment
+plotQualityProfile(fnFxxx[1:4]) # 1x numbers to increment
+plotQualityProfile(fnRxxx[1:4]) # 1x numbers to increment
 toc()
 ```
 
 QC your data.
-```{r}
+```{r xxx-qc-data}
 tic()
-outxxx <- filterAndTrim(fnFxxx, filtFxxx, fnRxxx, filtRxxx, trimLeft=c(19,20),truncLen=c(240,200), maxN=0, maxEE=c(2,2), truncQ=2, minLen=75, rm.phix=TRUE, compress=TRUE, multithread=TRUE) #4x numbers to increment, adjust parameters as needed
-head(outxxx) #1x numbers to increment
-write.csv(outxxx,file="qc_checkxxx.csv") #2x numbers to increment
-plotQualityProfile(filtFxxx[1:4]) #1x numbers to increment
-plotQualityProfile(filtRxxx[1:4]) #1x numbers to increment
+outxxx <- filterAndTrim(fnFxxx, filtFxxx, fnRxxx, filtRxxx, trimLeft = c(19, 20), truncLen = c(240, 200), maxN = 0, maxEE = c(2, 2), truncQ = 2, minLen = 75, rm.phix = TRUE, compress = TRUE, multithread = TRUE) # 4x numbers to increment, adjust parameters as needed
+head(outxxx) # 1x numbers to increment
+write.csv(outxxx, file = "qc_checkxxx.csv") # 2x numbers to increment
+plotQualityProfile(filtFxxx[1:4]) # 1x numbers to increment
+plotQualityProfile(filtRxxx[1:4]) # 1x numbers to increment
 toc()
 ```
 
 Derep, find your error rates, denoise, and save your sequence table. 
-```{r}
+```{r xxx-process-data}
 tic()
-derepFxxx <- derepFastq(filtFxxx, verbose=TRUE)  #2x numbers to increment
-derepRxxx <- derepFastq(filtRxxx, verbose=TRUE)  #2x numbers to increment
+derepFxxx <- derepFastq(filtFxxx, verbose = TRUE) # 2x numbers to increment
+derepRxxx <- derepFastq(filtRxxx, verbose = TRUE) # 2x numbers to increment
 
-errFxxx <- learnErrors(derepFxxx, multithread=TRUE) #2x numbers to increment
-errRxxx <- learnErrors(derepRxxx, multithread=TRUE) #2x numbers to increment
+errFxxx <- learnErrors(derepFxxx, multithread = TRUE) # 2x numbers to increment
+errRxxx <- learnErrors(derepRxxx, multithread = TRUE) # 2x numbers to increment
 
-dadaFxxx <- dada(derepFxxx, err=errFxxx, multithread=TRUE) #3x numbers to increment
-dadaRxxx <- dada(derepRxxx, err=errRxxx, multithread=TRUE) #3x numbers to increment
+dadaFxxx <- dada(derepFxxx, err = errFxxx, multithread = TRUE) # 3x numbers to increment
+dadaRxxx <- dada(derepRxxx, err = errRxxx, multithread = TRUE) # 3x numbers to increment
 
-mergerxxx <- mergePairs(dadaFxxx, derepFxxx, dadaRxxx, derepRxxx, verbose=TRUE)  #5x numbers to increment
-head(mergerxxx[[1]]) #1x numbers to increment 
-seqtabxxx <- makeSequenceTable(mergerxxx) #2x numbers to increment
-saveRDS(seqtabxxx, "seqtabxxx.Rds") #2x numbers to increment
+mergerxxx <- mergePairs(dadaFxxx, derepFxxx, dadaRxxx, derepRxxx, verbose = TRUE) # 5x numbers to increment
+head(mergerxxx[[1]]) # 1x numbers to increment
+seqtabxxx <- makeSequenceTable(mergerxxx) # 2x numbers to increment
+saveRDS(seqtabxxx, "seqtabxxx.rds") # 2x numbers to increment
 toc()
 ```
 
 
-Examine your environment pane in R. Check the names in the "Data" list and "Values" list to make sure that there is one for every sample (eg., FiltF1, filtF2, ...)
+Examine your environment pane in R. 
+Check the names in the "Data" list and "Values" list to make sure that there is one for every sample (eg., filtF1, filtF2, ...)
+
+#Combine sequencing runs
+
+If R crashed or you're combine output you made at different times, unhash this section and read them in
+```{#r import-sequence-tables}
+seqtabx <- readRDS("/path/to/seqtab/x")
+#replace 'x' with the number
+```
 
 Combine samples from different sequencing runs into a single table. 
-```{r}
-seqtab <- mergeSequenceTables(seqtab1, seqtab2, seqtab3, etc) ##add all of the sequence tables you generated
-saveRDS(seqtab, "seqtab.Rds")
+```{r merge-sequence-tables}
+seqtab <- mergeSequenceTables(seqtab1, seqtab2, seqtab3, ...) # make sure every seqtab file you made is here
+saveRDS(seqtab, "seqtab.rds")
+```
+
+#Chimera removal
+
+Let's get rid of any sequences that are much shorter or longer than expected. 
+Our V4V5, after primer removal, should be around 374 bp. Let's give it +/- 25 bp. 
+
+If you have a hinky distribution of fragment lengths, that's something you have to investigate.
+```{r sequence-length-distribution}
 dim(seqtab)
 table(nchar(getSequences(seqtab)))
+seqtab.trim <- seqtab[, nchar(colnames(seqtab)) %in% 350:400] # If using a different set of primers, change to something appropriate
+table(nchar(getSequences(seqtab.trim))) ## Print size distribution of sequences after trimming
 ```
 
-  
+Losing more than 25% of your ASVs is considered a cause for concern. 
+With our primers, a lot of datasets seem to come in 20-90+%. (90% is not a typo.) 
+This is likely due to PCR protocols, but the fact that we are working with multi-V region amplicons is also a contributor (the conserved region between V4 and V5 increases chimera prevalence). 
 
-Let's get rid of any sequences that are much shorter or longer than expected, because that means something is off about them. Our V4V5, after primer removal, should be around 374 bp. Let's give it +/- 25 bp. 
+Note that using the boost PCR protocol appears to dramatically increase the number of chimeric sequences. 
+As per Yin, it should always be a last resort for PCR, and used only after the normal 25 and 30 cycle PCRs have failed to produce enough DNA. 
+Boost protocols are better than nothing, but results in a lot more junk. 
+It makes the largest total amount of DNA, but if the other cycles work they will make more USABLE DNA. 
 
-If you have a hinky distribution of fragment lengths, that's something to investigate.
-```{r}
-seqtab.trim <- seqtab[,nchar(colnames(seqtab)) %in% 350:400] #If using a different set of primers, change to something appropriate
-table(nchar(getSequences(seqtab.trim))) ##Print size distribution of sequences after trimming
-```
-
-Remove chimeras. Losing more than 25% of your ASVs can be considered a cause for concern. With our primers, a lot of datasets seem to come in 20-90%. (90% is not a typo.) I have seem some above 90%. This is likely due to PCR protocols, but the fact that we are working with multi-V region amplicons is also a contributor (the conserved region between V4 and V5 increases chimera prevalence). 
-
-If the proportion of bimeras/chimeras removed is high, but the proportion of reads retained is also high (>85%, or sum(seqtab.nochim)/sum(seqtab.trim) >0.85), you're probably okay. If you're losing more than 15% of your reads, it's time to revisit your protocols.
-
-Note that using the boost PCR protocol appears to dramatically increase the number of chimeric sequences. As per Yin, it should always be a last resort for PCR, and used only after the normal 25 and 30 cycle PCRs have failed to produce enough DNA. It's better than nothing, but results in a lot more junk. It makes the largest total amount of DNA, but if the other cycles work they will make more USABLE DNA. 
-
-```{r}
+```{r chimera-removal}
 tic()
-seqtab.nochim <- removeBimeraDenovo(seqtab.trim, method="consensus", multithread=TRUE, verbose=TRUE)
+
+seqtab.nochim <- removeBimeraDenovo(seqtab.trim, method = "consensus", multithread = TRUE, verbose = TRUE)
 dim(seqtab.nochim)
-sum(seqtab.nochim)/sum(seqtab.trim)
-saveRDS(seqtab.nochim,"seqtab.nochim.rds")
+sum(seqtab.nochim) / sum(seqtab.trim)
+saveRDS(seqtab.nochim, "seqtab.nochim.rds")
+
 toc()
 ```
+
+If the proportion of bimeras/chimeras removed is high, but the proportion of reads retained is also high (>85%, or sum(seqtab.nochim)/sum(seqtab.trim) >0.85), you're probably okay. 
+If you're losing more than 15% of your reads, it's time to revisit your protocols, and you might not be able to trust any of your data.
 
 Make a note of your %ASV removal and %reads retained. You can get this from the console output. 
 
@@ -444,36 +443,46 @@ Identified 85685 bimeras out of 94653 input sequences.
 > sum(seqtab.nochim)/sum(seqtab.trim)
 [1] 0.877479
 
-90.5% of our ASVs were chimeric (85685/94653), but we have kept 87.75% of our reads. This is not ideal (we want to lose less than 25% of our ASVs), but as we have kept more than 85% of the reads, we can move on.
+90.5% of our ASVs were chimeric (85685/94653), but we have kept 87.75% of our reads. 
+This is not ideal (we want to lose less than 25% of our ASVs), but as we have kept more than 85% of the reads, we can move on.
 
-Assign taxonomy! Assign taxonomy from a reference database (e.g., SILVA 138).  This step can take some time. The current Silva database is stored in silvacurrent; feel free to check the readme in that folder to see the name of the current version. As of April 23, 2025, it is 138.2. The 138.2 release unifies this taxonomy with the major 2022 update to prokaryotic taxonomy - Bacillota replacing Firmicutes, Pseudomonadota replacing Proteobacteria, etc. Future updates can be renamed to the match below and all versions of this script will do their identification from the most recent versions of the database. 
-```{r}
+#Assign taxonomy
+
+Assign taxonomy! Assign taxonomy from a reference database (e.g., SILVA 138).  This step can take some time. 
+The current Silva database is stored in silvacurrent; feel free to check the readme in that folder to see the name of the current version. 
+As of April 23, 2025, it is 138.2. 
+The 138.2 release unifies this taxonomy with the major 2022 update to prokaryotic taxonomy - Bacillota replacing Firmicutes, Pseudomonadota replacing Proteobacteria, etc. 
+Future updates can be renamed to the match below and all versions of this script will do their identification from the most recent versions of the database. 
+```{r taxonomy-to-genus}
 tic()
-taxa1 <- assignTaxonomy(seqtab.nochim, "/mnt/work-drive/databases/silva/current/silva_nr99_vcurrent_toGenus_trainset.fa.gz", multithread=TRUE)
+taxa1 <- assignTaxonomy(seqtab.nochim, "/mnt/work-drive/databases/silva/current/silva_nr99_vcurrent_toGenus_trainset.fa.gz", multithread = TRUE)
 toc()
 ```
 
-Add the species identification. This is technically optional, but you've done all this work to get here, why not take the extra 2-5 minutes?
-```{r}
+Add the species identification. 
+This is technically optional, but you've done all this work to get here, why not take the extra 2-5 minutes?
+```{r taxonomy-to-species}
 tic()
 taxa1 <- addSpecies(taxa1, "/mnt/work-drive/databases/silva/current/silva_vcurrent_assignSpecies.fa.gz")
 toc()
 ```
 
 Look at your data.
-```{r}
+```{r visual-data-check}
 taxa1.print <- taxa1 # Removing sequence row names for display only
 rownames(taxa1.print) <- NULL
 head(taxa1.print)
-
 ```
 
-If your reads do not seem to be appropriately assigned (such as many bacterial 16S sequences are being assigned as Eukaryota NA NA NA NA NA), your reads may be in the opposite orientation from the reference database. Tell dada2 to try the reverse-complement orientation with assignTaxonomy(..., tryRC=TRUE) and see if this fixes the assignments. 
+If your reads do not seem to be appropriately assigned (such as many bacterial 16S sequences are being assigned as Eukaryota NA NA NA NA NA), your reads may be in the opposite orientation from the reference database. 
+Tell dada2 to try the reverse-complement orientation with assignTaxonomy(..., tryRC=TRUE) and see if this fixes the assignments. 
 
 Replace "taxa1 <- assignTaxonomy(seqtab.nochim, "/mnt/sdb/taxonomyReferenceDatabases/silvacurrent/silva_nr99_vcurrent_toGenus_trainset.fa.gz", multithread=TRUE)" above with "taxa1 <- assignTaxonomy(seqtab.nochim, "/mnt/sdb/taxonomyReferenceDatabases/silvacurrent/silva_nr99_vcurrent_toGenus_trainset.fa.gz", tryRC=TRUE, multithread=TRUE)", and rerun the classification steps. 
 
+#Data output
+
 Save the sequence variant table as a csv file
-```{r}
+```{r write-asv-table}
 seqnum <- paste0("ASV", seq(ncol(seqtab.nochim))) # gives unique ID (ASV1, ASV2,...) to each sequence variant
 uniqueSeqs <- as.list(colnames(seqtab.nochim)) # creates a list of the sequences
 seqtab.nochim.transposed <- t(seqtab.nochim) # transposes the matrix (ASVs in rows, samples in columns)
@@ -482,262 +491,46 @@ head(seqtab.nochim.transposed)
 
 # Re-label the first column title "ASV" for merging later
 
-seqtab.nochim.transposed <- cbind(rownames(seqtab.nochim.transposed),seqtab.nochim.transposed)
+seqtab.nochim.transposed <- cbind(rownames(seqtab.nochim.transposed), seqtab.nochim.transposed)
 rownames(seqtab.nochim.transposed) <- NULL
-colnames(seqtab.nochim.transposed)[1] <- "ASV" 
+colnames(seqtab.nochim.transposed)[1] <- "ASV"
 
-write.csv(seqtab.nochim.transposed, file="asv_table.csv") # writes csv file
+write.csv(seqtab.nochim.transposed, file = "asv_table.csv") # writes csv file
 ```
 
 Merge ASV table (with read counts/abundances) with the taxonomy table (up to species level assignments) by shared variable, using all.x=T to ensure all rows are kept.  
-```{r}
+```{r write-taxa-table}
 tax1 <- as.matrix(taxa1)
 rownames(tax1) <- as.character(seqnum) # changes rownames to ASV IDs
-y <- which(is.na(tax1)==TRUE) # get index of NA values 
+y <- which(is.na(tax1) == TRUE) # get index of NA values
 tax1[y] <- "Unclassified" # replace all NA values with 'Unclassified"
 head(tax1)
 
-tax1 <- cbind(rownames(tax1),tax1) # Re-label the first column title "ASV" for later merging
+tax1 <- cbind(rownames(tax1), tax1) # Re-label the first column title "ASV" for later merging
 rownames(tax1) <- NULL
-colnames(tax1)[1] <- "ASV" 
+colnames(tax1)[1] <- "ASV"
 
-write.csv(tax1, file="taxonomy_only.csv") # writes csv file of taxonomy
+write.csv(tax1, file = "taxonomy_only.csv") # writes csv file of taxonomy
 
-saveRDS(tax1, "taxtab.rds") #saves an Rdata object for phyloseq
+saveRDS(tax1, "taxtab.rds") # saves an Rdata object for phyloseq
 ```
-
 
 Merge ASV table (with read counts/abundances) with the taxonomy table (up to species level assignments) 
-```{r}
+```{r write-final-table}
 clean.taxa.table <- merge(tax1, seqtab.nochim.transposed, by = "ASV", all.x = TRUE)
-write.csv(clean.taxa.table, file="final_clean_taxa_table.csv")
+write.csv(clean.taxa.table, file = "final_clean_taxa_table.csv")
 ```
 
-IMPORTANT NOTE: Silva assigns chloroplast sequences as Bacteria; Cyanobacteriota; Cyanobacteriia; Chloroplast; it places mitochondria as Bacteria; Pseudomonadota; Alphaproteobacteria; Rickettsiales; Mitochondria. 
+IMPORTANT NOTE: 
+Silva assigns chloroplast sequences as Bacteria; Cyanobacteriota; Cyanobacteriia; Chloroplast; 
+It assigns mitochondria as Bacteria; Pseudomonadota; Alphaproteobacteria; Rickettsiales; Mitochondria. 
 
-If you are taking final_clean_taxa_table.csv to downstream analysis other than the phyloseq script below, you must manually remove ASVs from chloroplasts and mitochondria, as they are eukaryotic in origin, and not actually part of the prokaryotic community. These will contribute virtually nothing to some samples, but can contribute the majority of reads in others.
+If you are taking final_clean_taxa_table.csv to downstream analysis other than the phylo-micro script below, you must manually remove ASVs from chloroplasts and mitochondria.
+As they are eukaryotic in origin they shouldn't be processed with the prokaryotic community. 
 
+For some samples these contribute virtually nothing.
+For others, they contribute >90% of the output.
 
-!!!
-You can stop here if you'd like. For diversity stats and interactive table generation, continue! You can also take the final_clean_taxa_table.csv file, pull out or collapse what you'd like to graph, and take that csv into Excel, GraphPad, or any of the graphing scripts I've provided. There are scripts for bubble plots, stacked bar charts, and alluvial graphs. 
+#Downstream analysis
 
-Create a metadata file. 
-
-Metadata file requirements:
-1) Data in the "Sample" column must match the sample names defined above
-2) One row for each sample
-3) One column for each variable
-4) Must be saved as a csv, with commas used as delineators
-
-Generic example:
-
-Sample                    Sample_Name         Sample_Type   Media     Variable_X    Variable_Y
-Sample_id_used_in_DADA2   Descriptive_name    Control       Rich      ...           ...
-Sample_id_used_in_DADA2   Descriptive_name    Control       Minimal   ...           ...
-Sample_id_used_in_DADA2   Descriptive_name    Exposure      Rich      ...           ...
-
-
-
-```{r}
-library(phyloseq);
-library(phyloseqCompanion);
-library(Biostrings);
-library(tidyverse);
-library(csv)
-```
-
-```{r}
-sdata <- read.csv("/path/to/your/metadata/meta.csv", ##CHANGE THIS to your metadata file
-                row.names = 1, header = TRUE, sep = ",", check.names = TRUE, stringsAsFactors = TRUE)
-head(sdata)
-sequence_table <- seqtab.nochim ##load your sequence table from above, OR
-#sequence_table <- readRDS("/path/to/your/seqtab.nochim.rds") ##Read in your rds file if running as a standalone
-sequence_table[1:3,1:3] #view the sequences
-```
-
-```{r}
-colnames(sequence_table) <- NULL #remove the sequences
-sequence_table[1:4,1:4] #confirm that the sequences have been removed
-
-#remove any taxa with zero counts
-sequence_table <- as.matrix(sequence_table)                            #change to matrix format
-m <- (colSums(sequence_table, na.rm=TRUE) != 0)                        
-nonzero <- sequence_table[, m]  
-
-taxa <- taxa1 #load your taxa table from above, OR
-#taxa <- readRDS("/path/to/your/taxtab.rds") ##Read in your rds file if running as a standalone
-taxa[1:4,1:4] ##Change 4 to the number of columns your metadata table has
-
-```
-
-```{r}
-#format for phyloseq
-samdata = sample_data(sdata)
-seqtab = otu_table(nonzero, taxa_are_rows = FALSE)
-taxtab = tax_table(taxa)
-
-
-#check that sample names and taxa names match
-head(sample_names(samdata))
-head(sample_names(seqtab))
-#and so do these
-head(taxa_names(seqtab))
-head(taxa_names(taxtab))
-
-#Save the Phyloseq object
-ps = phyloseq(otu_table(seqtab), tax_table(taxtab), sample_data(samdata))
-ps
-write_rds(ps, "ps_out.rds")
-```
-
-Filter out Eukaryotic sequences, mitochondria, and chloroplasts. Remove any sample with extremely low sampling depth. Save as a new object. If you want to keep eukaryotic sequences, hash out the Kingdom line.
-```{r}
-ps.clean <- ps %>%
-  subset_taxa(
-    Kingdom == "Bacteria" &                   #only bacteria
-      Family  != "Mitochondria" &             #filter out mitochondria
-      Class   != "Chloroplast"                #filter out chloroplasts
-  )
-# Remove samples with less than 10,000 reads from phyloseq object - change as desired, but make sure it is at least 1,000. It's a good idea to do this based on the distribution of your reads across your samples.
-ps.clean <- prune_samples(sample_sums(ps.clean) >= 10000, ps2)
-
-#to remove individual samples by name (for example, dummy duplicates for singlet sequences)
-##ps.clean <-prune_samples(sample_names(ps.clean) !="425-dummy-L001", ps.clean) #creates an object with every sample except the one named "425-dummy-L001"
-
-write_rds(ps.clean, "ps_clean_out.rds")
-
-```
-
-
-Subset your data, if desired! You can create as many objects with data subsets as you'd like! It's a good idea to name the data object clearly and concisely. Or you can just append numbers.
-```{r}
-#to subset by filtering a metadata table IN
-ps.set1  <- ps.clean %>%
-  subset_samples(exp_set %in% c("1")) #creates an object named ps_set1 that includes samples whose value in the metadata table for the column "exp_set" is "1." c("1", "3", "5") would be all samples whose exp_set value is 1, 3, or 5. You can use more than one of the labels from that column. You can subset by any values in any specific column of your metadata table. 
-
-```
-
-
-Optional: convert reads to relative abundances and filter out extremely low abundance ASVs.
-
-```{r}
-ps.set1.r  = transform_sample_counts(ps.set1, function(x) x / sum(x) ) #convert reads to relative abundances
-ps.set1.rf = filter_taxa(ps.set1.r, function(x) mean(x) > 1e-5, TRUE) #filter out any taxa where the mean of the relative abundances across samples is less than 0.001%
-```
-
-
-If there's a lot of variation in your sampling depth, you HAVE to rarify or transform your data. Otherwise you can't differentiate between real diversity differences and greater sampling depth. I don't like rarification - it holds you hostage to your worst data.
-
-If your sampling depth is even, don't run this chunk. This does a centre log ratio transformation on your counts (do not transform relative abundance data).
-
-```{r}
-
-clr.ps.s1 <- clr.transform(ps.set1, min_reads = 10000) #min reads should be equal to or greater than the minimum number of reads used above
-```
-
-See Stats_overview.txt for a high level view of different types of statistical analysis and when to use them.
-
-Plot all of the alpha diversity indexes available! Adjust the name of this object to whichever object you made above.
-```{r}
-plot_richness(ps.set1)
-```
-
-Okay, that's too many indexes, put some back. 
-
-Available indexes: Observed, Chao1, ACE, Shannon, Simpson, InvSimpson (Inverse Simpson), and Fisher
-
-You can use your metadata table to colour your points or define their shape, or even generate multiple plots per diversity index, using the column header.
-
-Let's use the generic table at line 422 as an example. 
-
-Let's say you want to plot:
-- The Shannon, Simpson, and Chao1 indexes
-- For subset 1 of your clean data
-- You want your bottom axis arranged by media type ("Media" column) instead of sample name 
-- You want to define the shape of your marker by whether a sample is a control or exposure ("Sample_Type" column)
-- You want to colour code markers by sample name ("Sample_Name" column)
-
-```{r}
-plot_richness(
-  ps.set1, 
-  measures=c("Shannon", "Simpson", "Chao1"), 
-  x="Media", 
-  colour="Sample_Name", 
-  shape="Sample_Type")
-
-#You can define as few or as many of these options as you'd like, but they MUST be headers from the metadata table you loaded. 
-```
-
-
-OPTIONAL: make it prettier.
-
-```{r}
-plot_richness(
-  ps.set1, 
-  measures=c("Shannon", "Simpson", "Chao1"), 
-  x="Media", 
-  colour="Sample_Name", 
-  shape="Sample_Type")
-
-p + geom_point(size=5,     #Marker size
-               alpha=0.7)  #Marker transparency, from 1 (completely opaque) to 0 (completely transparent)
-```
-
-Save whichever figures you'd like to keep via Export -> Save as Image, then selecting your parameters for export. 
-
-NMDS
-You can use Bray-Curtis or Jaccard distances. Because Jaccard is a presence/absence measure, it shouldn't be used with transformations that add pseudo counts.
-```{r}
-ps.prop <- transform_sample_counts(clr.ps.s1, function(asv) asv/sum(asv))
-
-ord.nmds.bray <- ordinate(ps.prop, 
-                          method="NMDS", 
-                          distance="bray") #replace "bray" with "jaccard" if using the Jaccard index
-
-plot_ordination(ps.prop, ord.nmds.bray, 
-                colour="Sample_Name", #metadata column to colour points by - play around with this
-                title="Bray-Curtis NMDS") #change whichever distance you're using or you'll never know
-```
-
-
-Heat Maps:
-
-Plot a heatmap of your top 20 ASVs!
-```{r}
-set1.top20 <- names(sort(taxa_sums(ps.set1), decreasing=TRUE))[1:20] #change 20 to your desired number of ASVs
-ps.set1.top20 <- transform_sample_counts(ps.set1, function(ASV) ASV/sum(ASV))
-ps.set1.top20 <- prune_taxa(set1.top20, ps.set1.top20)
-
-plot_heatmap(ps.set1.top20)
-```
-
-
-Plot a heat map of your ASVs, but name them based on another taxonomic level!
-```{r}
-plot_heatmap(ps.set1.top20, 
-             "NMDS", "bray", 
-             "Sample_Name", #metadata variable for x-axis
-             "ASV") #classification level of your choice, ASV-Kingdom
-
-#Note that these heat maps will always plot based on the first column in the metadata table (Sample), so if you cannot manually select that as a naming column
-```
-
-More detailed heatmap modifications discussed here: https://joey711.github.io/phyloseq/plot_heatmap-examples.html
-
-Bar plots!
-
-Generate bar plot of your top X ASVs (top 20, in this case) from set 1 of your clean data and use the headers from your metadata table to decide how it's formatted.
-
-```{r}
-set1.top20 <- names(sort(taxa_sums(ps.set1), decreasing=TRUE))[1:20] #change 20 to your desired number of ASVs
-ps.set1.top20 <- transform_sample_counts(ps.set1, function(ASV) ASV/sum(ASV))
-ps.set1.top20 <- prune_taxa(set1.top20, ps.set1.top20)
-
-plot_bar(ps.set1.top20, 
-         x="Sample_Name", #how bars are defined
-         fill="Genus") #level of classification things will be colour-coded by: ASV to Kingdom available
-
-+ facet_wrap(~Sample_Type, #metadata used to split graphs: comment this section out if you'd like a single bar chart
-             scales="free_x") #leaves chart width unconstrained
-
-```
+Launch the phylo-micro.rmd script from your working directory, and continue to community analysis.
